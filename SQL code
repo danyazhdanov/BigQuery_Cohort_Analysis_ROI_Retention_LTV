@@ -2,13 +2,13 @@ WITH Purchase_and_CRM AS
  
 (
    SELECT *,
-    EXTRACT(MONTH FROM Date(install_date)) AS Install_month,  --Месяц установки
-    EXTRACT(MONTH FROM Date(orderDate)) AS Order_Month,       --Месяц транзакции
+    EXTRACT(MONTH FROM Date(install_date)) AS Install_month,  --Install month
+    EXTRACT(MONTH FROM Date(orderDate)) AS Order_Month,       --Transaction month
     CASE                            
       WHEN promoId IS NOT NULL      
       AND (CAST(orderNumber as int64) = 1)
          THEN 'YES'
-      ELSE 'NO'                     --Добавляем столбец Promo: наличие промокода у первой покупки
+      ELSE 'NO'                     --Adding column Promo: if a purchase was made using promo  
     END
     AS Promo                     
   FROM 
@@ -16,18 +16,18 @@ WITH Purchase_and_CRM AS
   RIGHT JOIN 
     `school22_project.crm_data` AS crm
   ON 
-    af.order_id = crm.orderID AND                     --Join По ID транзакции 
-    Date(af.event_date) = Date(crm.orderDate)         --и дате
+    af.order_id = crm.orderID AND                     --Join on ID of transaction 
+    Date(af.event_date) = Date(crm.orderDate)         --and date
   WHERE af.appsflyer_id IS NOT NULL
-    AND af.install_date IS NOT NULL                   --Исключаем NULL даты и ID пользователей
+    AND af.install_date IS NOT NULL                   --Excluding NULL dates and ID of users
     AND af.event_date IS NOT NULL
     AND crm.orderDate IS NOT NULL
-    AND Date(crm.orderDate) >= Date(af.install_date)  --Дата покупки не раньше установки
+    AND Date(crm.orderDate) >= Date(af.install_date)  --Purchase date is not earlier than install date
  
 ),
  
  
-Install_Cohort_Duplicates1 AS               -- Собираем все данные по каждому пользователю
+Install_Cohort_Duplicates1 AS               -- Aggregating data on every user
  
 (
   SELECT
@@ -40,25 +40,25 @@ Install_Cohort_Duplicates1 AS               -- Собираем все данн�
   FROM 
     Purchase_and_CRM
   WHERE platform IS NOT NULL
-  AND media_source IS NOT NULL             --Не учитывал данные с NULL в платформе/источнике/промо
+  AND media_source IS NOT NULL             --Not inclunding rows with NULL data of platform/source/promo
   AND Promo IS NOT NULL
 ),
  
-Install_Cohort_Duplicates2 AS              -- Определяем людей по когортам месяца установки
+Install_Cohort_Duplicates2 AS              -- Sorting users by install month cohorts
  
 (
   SELECT
-    MIN(Install_month) AS Cohort_Month,    -- Брал самый ранний месяц установки,  
-    UserID,                                -- где несколько дат установки у одного человека
+    MIN(Install_month) AS Cohort_Month,    -- Taking the earliest month of installation,  
+    UserID,                                -- where more than one is present
     MIN(event_date) AS Event_Date,
-    MAX(Promo) AS Promo                    -- max promo: я брал c промо(YES),
-  FROM                                     -- где в первом месяце есть с промо(yes) и без(no)  
+    MAX(Promo) AS Promo                    -- max promo: I took the date with promo(YES),
+  FROM                                     -- If there was two equal in the first month with and without promo
     Install_Cohort_Duplicates1
   GROUP BY UserID
   ORDER BY Cohort_Month, UserID 
 ),
  
-Install_Cohort_Event_Date AS               -- Соединяем данные по когортам и платформам/источникам
+Install_Cohort_Event_Date AS               -- Adding together date on cohorts and platforms/sources
  
 (
   SELECT
@@ -79,7 +79,7 @@ Install_Cohort_Event_Date AS               -- Соединяем данные п
  
 ),
  
-Install_Cohort_No_Duplicates AS            -- Избавляемся от дублей
+Install_Cohort_No_Duplicates AS            -- Excluding duplicate values
  
 (
   SELECT 
@@ -88,10 +88,10 @@ Install_Cohort_No_Duplicates AS            -- Избавляемся от дуб
     Install_Cohort_Event_Date
 ),
  
-Install_Cohort AS       -- Данные по пользователю, его когорте, источникам
+Install_Cohort AS       -- Data about user, cohort and source
  
 (
-  SELECT               -- User ID/ номер месяца установки/ Платформа/Источник/Промо (без дублей)
+  SELECT               -- User ID/ Install month number/ Platform/ Source/ Promo (no duplicates)
     Cohort_Month,
     UserID,
     Platform,
@@ -103,7 +103,7 @@ Install_Cohort AS       -- Данные по пользователю, его к
  
 ),
  
-Cohort_Size AS                              -- Размер каждой когорты 
+Cohort_Size AS                              -- Cohort size
  
 (
   SELECT
@@ -119,10 +119,10 @@ Cohort_Size AS                              -- Размер каждой ког�
 ),
  
  
-User_Activities_Mulitple_In_Month AS  --Активность пользователя (несколько транзакций в одном месяце)  
+User_Activities_Mulitple_In_Month AS  --User activities (multiple transactions in one month)  
  
 (
-  SELECT               -- User ID/ номер месяца транзакций/ платформа/ источник/ промо
+  SELECT               -- User ID/ Order month number/ Platform/ Source/ Promo
     inst.UserID,
     (pur.Order_Month - inst.Cohort_Month) AS Order_Month_Number,
     inst.Platform,
@@ -136,20 +136,20 @@ User_Activities_Mulitple_In_Month AS  --Активность пользоват�
 ),
  
  
-User_Activities AS    --Активность пользователя (есть ли в этом месяце хотя бы одна транзакция) 
+User_Activities AS    --User activities ( if there is at least one transaction in a given month) 
  
 (
-  SELECT               -- User ID/ номер месяца транзакций/ платформа/ источник/ промо
+  SELECT               -- User ID/ Order month number/ Platform/ Source/ Promo
     DISTINCT *
   FROM 
     User_Activities_Mulitple_In_Month
   ORDER BY UserID, Order_Month_Number 
 ),
  
-Data_for_Retention_Table AS     -- Данные вернувшихся пользователей по когортам
+Data_for_Retention_Table AS     -- Data about returning users by cohorts
  
 (
-  SELECT               -- (месяц установки/ платформа/ источник/ промо/ месяц транзакции/ кол-во)
+  SELECT               -- (Install month number/ Platform/ Source/ Promo/ Order month number/ Numbers)
     coh.Cohort_Month,
     act.Platform,
     act.Source,
@@ -168,7 +168,7 @@ Data_for_Retention_Table AS     -- Данные вернувшихся поль�
 Retention_Percentage AS 
  
 (
-SELECT                    -- Окончательные данные: делим число вернувшихся на число в когорте
+SELECT                    -- Final data: divide number of retured users by cohort number
   ret.Cohort_Month,       
   ret.Platform,
   ret.Source,
@@ -186,7 +186,7 @@ LEFT JOIN Cohort_Size AS siz
 ORDER BY ret.Cohort_Month, ret.Platform, ret.Source, ret.Promo, ret.Order_Month_Number
 ), 
  
-Reveneue_Cost_Transaction AS    -- Все данные по каждой транзакции, доходы, расходы, дата, UserID
+Reveneue_Cost_Transaction AS    -- All data about every order, revenue, costs, date, UserID
  
 (
   SELECT
@@ -198,13 +198,13 @@ Reveneue_Cost_Transaction AS    -- Все данные по каждой тра�
     media_source AS Source,
     Promo,
     Sum,
-    (CASE                                 -- Условие расходов на доставку(заказ на больше 3000)
+    (CASE                                 -- Delivery costs condition (Purchase amount higher than 3000)
       WHEN Sum >= 3000      
         THEN 1000
     ELSE 0
     END)
     AS Delivery_Cost,
-    (CASE                                         --Условия расходов на промо коды
+    (CASE                                         --Promo-code costs condition
       WHEN promoId = '7525' AND SUM >= 2000      
         THEN 800
       WHEN promoId = '7641' AND SUM >= 1000      
@@ -221,11 +221,11 @@ Reveneue_Cost_Transaction AS    -- Все данные по каждой тра�
   FROM 
     Purchase_and_CRM
   WHERE platform IS NOT NULL
-  AND media_source IS NOT NULL             --Не учитывал данные с NULL в платформе/источнике/промо
+  AND media_source IS NOT NULL             --Not inclunding rows with NULL data of platform/source/promo
   AND Promo IS NOT NULL
 ),
  
-User_Revenue_Cost AS     --Доходы, расходы на доставку и промо пользователя по когортам  
+User_Revenue_Cost AS     --Revenue, delivery and promo-code costs by user by cohorts  
  
 (
   SELECT               
@@ -245,7 +245,7 @@ User_Revenue_Cost AS     --Доходы, расходы на доставку и
   ORDER BY UserID, Order_Month_Number
 ),
  
-Cost_Marketing_per_Source AS             --Расходы на маркетинг по когорте источников и месяцу
+Cost_Marketing_per_Source AS             --Marketing costs by Source cohort and month
  
 (
   SELECT
@@ -261,7 +261,7 @@ Cost_Marketing_per_Source AS             --Расходы на маркетин�
 Revenue_Cost_per_Source AS   
  
 (
-  SELECT                  -- Доходы, Расходы на доставку, промо по когортам источников и месяцам
+  SELECT                  -- Revenue, delivery and promo-code costs by source cohorts and month
     Cohort_Month,
     Platform,
     Source,
@@ -278,7 +278,7 @@ Revenue_Cost_per_Source AS
 Revenue_Cost_per_Source_With_Marketing_Costs AS
  
 (
-  SELECT        -- Доходы, Расходы на маркетинг, доставку, промо по когортам источников и месяцам 
+  SELECT        -- Revenue, Marketing costs, delivery and promo-code costs by source cohorts and month 
     rev.Cohort_Month,
     rev.Platform,
     rev.Source,
@@ -297,7 +297,7 @@ Revenue_Cost_per_Source_With_Marketing_Costs AS
   ORDER BY rev.Cohort_Month, rev.Platform, rev.Source, rev.Order_Month_Number
 ),
  
-ROI_Per_Source AS                            -- ROI по когортам источников и месяцам 
+ROI_Per_Source AS                            -- ROI by source cohorts and month 
  
 (
   SELECT
@@ -310,7 +310,7 @@ ROI_Per_Source AS                            -- ROI по когортам ист
   FROM Revenue_Cost_per_Source_With_Marketing_Costs
 ),
  
-Revenue_Cost_per_Source_Promo AS            -- Доходы, затраты по месяцам и когортам
+Revenue_Cost_per_Source_Promo AS            -- Revenue, by cohorts and month
  
 (
   SELECT
@@ -328,7 +328,7 @@ Revenue_Cost_per_Source_Promo AS            -- Доходы, затраты по
   ORDER BY Cohort_Month, Platform, Source, Promo, Order_Month_Number
 ),
  
-LTV_Revenue_Discrete AS                     -- LTV (доход) по месяцам и когортам
+LTV_Revenue_Discrete AS                     -- LTV (Revenue) by cohorts and month
  
 (
   SELECT
@@ -342,7 +342,7 @@ LTV_Revenue_Discrete AS                     -- LTV (доход) по месяц�
   FROM Revenue_Cost_per_Source_Promo
 ),
  
-LTV_Revenue_Cumulative AS                  -- LTV (доход) кумулятивная по месяцам и когортам
+LTV_Revenue_Cumulative AS                  -- LTV (Revenue) Cumulative by cohorts and month
  
 (
   SELECT
@@ -357,7 +357,7 @@ LTV_Revenue_Cumulative AS                  -- LTV (доход) кумуляти�
 ),
  
  
-LTV_Profit_Discrete AS                   -- LTV (прибыль) по месяцам и когортам
+LTV_Profit_Discrete AS                   -- LTV (profit) by cohorts and month
  
 (
   SELECT
@@ -371,7 +371,7 @@ LTV_Profit_Discrete AS                   -- LTV (прибыль) по месяц
   FROM Revenue_Cost_per_Source_Promo
 ),
  
-LTV_Profit_Cumulative AS                 -- LTV (прибыль) кумулятивная по месяцам и когортам
+LTV_Profit_Cumulative AS                 -- LTV (profit) Cumulative by cohorts and month
  
 (
   SELECT
@@ -387,14 +387,14 @@ LTV_Profit_Cumulative AS                 -- LTV (прибыль) кумулят�
  
  
 SELECT * FROM Retention_Percentage 
-(запрос для получения данных по Retention)
+(Query to get the data about Retention)
 /*
 SELECT * FROM Avg_Check_Size_Per_Cohort
-(запрос для получения данных по Среднему чеку)
+(Query to get the data about Average check amount)
 SELECT * FROM LTV_Revenue_Cumulative
-(запрос для получения данных по LTV(Доход))
+(Query to get the data about LTV(Revenue))
 SELECT * FROM LTV_Profit_Cumulative
-(запрос для получения данных по LTV(Прибыль))
+(Query to get the data about LTV(profit))
 SELECT * FROM ROI_Per_Source
-(запрос для получения данных по ROI)
+(Query to get the data about ROI)
 */
